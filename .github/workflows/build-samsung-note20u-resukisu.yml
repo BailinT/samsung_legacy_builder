@@ -73,12 +73,12 @@ jobs:
           make O=out ARCH=arm64 \
             KCFLAGS="-Wno-error" \
             CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LD=ld.lld \
             exynos9830_defconfig
           ./scripts/config --file out/.config \
             --merge arch/arm64/configs/${{ inputs.device_config }}.config \
             --merge arch/arm64/configs/ksu.config
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang olddefconfig
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang LD=ld.lld olddefconfig
           echo "=== KSU/机型关键配置确认 ==="
           grep -E "CONFIG_KSU|CONFIG_SEC_" out/.config | head -20 || true
 
@@ -91,7 +91,7 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/artifacts
           make -j$(nproc) O=out ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LD=ld.lld \
             KCFLAGS="-Wno-error" \
             Image dtbs 2>&1 | tee $GITHUB_WORKSPACE/artifacts/build.log | tail -40
           ls -lh out/arch/arm64/boot/Image
