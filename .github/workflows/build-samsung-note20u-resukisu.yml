@@ -61,8 +61,13 @@ jobs:
             || wget -qO clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r416183b.tar.gz"
           tar -xf clang.tar.gz -C ../aosp-clang || (mkdir -p ../aosp-clang/extract && tar -xf clang.tar.gz -C ../aosp-clang/extract && find ../aosp-clang/extract -name clang -type f | head -1 | xargs dirname | xargs -I{} cp -r {}/* ../aosp-clang/)
           cd ..
+          # 用 GITHUB_PATH 持久化，后续步骤（新shell）也能找到 clang/ld.lld/binutils
+          echo "$GITHUB_WORKSPACE/aosp-clang/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc-aarch64-4.9/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc-arm-4.9/bin" >> $GITHUB_PATH
           export PATH="$GITHUB_WORKSPACE/aosp-clang/bin:$GITHUB_WORKSPACE/gcc-aarch64-4.9/bin:$GITHUB_WORKSPACE/gcc-arm-4.9/bin:$PATH"
           clang --version || true
+          ls aosp-clang/bin | head -20
 
       - name: Merge defconfig (base + device + ksu)
         working-directory: kernel
