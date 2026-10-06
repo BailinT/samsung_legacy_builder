@@ -80,9 +80,8 @@ jobs:
             CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LD=ld.lld \
             exynos9830_defconfig
-          ./scripts/config --file out/.config \
-            --merge arch/arm64/configs/${{ inputs.device_config }}.config \
-            --merge arch/arm64/configs/ksu.config
+          # scripts/config 不支持 --merge，改用合并脚本：机型config + ksu.config 追加后 olddefconfig
+          cat arch/arm64/configs/${{ inputs.device_config }}.config arch/arm64/configs/ksu.config >> out/.config
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang LD=ld.lld olddefconfig
           echo "=== KSU/机型关键配置确认 ==="
           grep -E "CONFIG_KSU|CONFIG_SEC_" out/.config | head -20 || true
