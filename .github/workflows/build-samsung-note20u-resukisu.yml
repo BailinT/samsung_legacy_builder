@@ -1,0 +1,153 @@
+name: Build Kernel -- ReSukiSU (Note20 Ultra, ivnls proven tree)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_config:
+        description: '机型 config（c2s=Note20U 5G / c2slte=4G / r8s / x1s / z3s / c1s / y2s）'
+        required: true
+        default: 'c2s'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build universal9830 ReSukiSU (${{ inputs.device_config }})
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+            ccache zip curl git python3 device-tree-compiler cpio
+
+      - name: Clone proven tree (ivnls, ReSukiSU in-tree with manual hooks)
+        run: |
+          set -e
+          git clone --depth=1 -b resukisu \
+            --recurse-submodules --shallow-submodules \
+            https://github.com/ivnls/android_kernel_samsung_universal9830-ReSukiSU.git kernel
+          cd kernel
+          echo "TREE_HEAD=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "KSU_HEAD=$(git -C KernelSU rev-parse --short HEAD 2>/dev/null || echo submodule)" >> $GITHUB_ENV
+          head -5 Makefile
+
+      - name: Setup toolchain (AOSP clang r416183b + GCC 4.9 binutils, seriaTvT-proven combo)
+        run: |
+          set -e
+          mkdir -p aosp-clang
+          # 4.19 老内核 + -no-integrated-as：ar/nm/objcopy 必须用 GCC 4.9 binutils
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
+            gcc-aarch64-4.9
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
+            gcc-arm-4.9
+          # AOSP clang 12 r416183b：三星 Exynos9830 官方同款
+          mkdir clang-dl && cd clang-dl
+          wget -qO clang.tar.gz "https://github.com/seriaTvT/kernel-builder-chopin/releases/download/Toolchain/linux-x86-bd96dfe349c962681f0e5388af874c771ef96670-clang-r416183b.tar.gz" \
+            || wget -qO clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r416183b.tar.gz"
+          tar -xf clang.tar.gz -C ../aosp-clang || (mkdir -p ../aosp-clang/extract && tar -xf clang.tar.gz -C ../aosp-clang/extract && find ../aosp-clang/extract -name clang -type f | head -1 | xargs dirname | xargs -I{} cp -r {}/* ../aosp-clang/)
+          cd ..
+          export PATH="$GITHUB_WORKSPACE/aosp-clang/bin:$GITHUB_WORKSPACE/gcc-aarch64-4.9/bin:$GITHUB_WORKSPACE/gcc-arm-4.9/bin:$PATH"
+          clang --version || true
+
+      - name: Merge defconfig (base + device + ksu)
+        working-directory: kernel
+        run: |
+          set -e
+          # 三星树惯例：exynos9830_defconfig 为底 + 机型 config + ksu.config
+          # 用 kconfig 合并避免追加被依赖项静默改写
+          make O=out ARCH=arm64 \
+            KCFLAGS="-Wno-error" \
+            CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            exynos9830_defconfig
+          ./scripts/config --file out/.config \
+            --merge arch/arm64/configs/${{ inputs.device_config }}.config \
+            --merge arch/arm64/configs/ksu.config
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang olddefconfig
+          echo "=== KSU/机型关键配置确认 ==="
+          grep -E "CONFIG_KSU|CONFIG_SEC_" out/.config | head -20 || true
+
+      - name: Build (Image + dtb)
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          export PATH="$GITHUB_WORKSPACE/aosp-clang/bin:$GITHUB_WORKSPACE/gcc-aarch64-4.9/bin:$GITHUB_WORKSPACE/gcc-arm-4.9/bin:$PATH"
+          export KBUILD_BUILD_TIMESTAMP=$(date)
+          mkdir -p $GITHUB_WORKSPACE/artifacts
+          make -j$(nproc) O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            KCFLAGS="-Wno-error" \
+            Image dtbs 2>&1 | tee $GITHUB_WORKSPACE/artifacts/build.log | tail -40
+          ls -lh out/arch/arm64/boot/Image
+          test -f out/arch/arm64/boot/Image
+
+      - name: Concat dtb
+        working-directory: kernel
+        run: |
+          find out/arch/arm64/boot/dts -name "*.dtb" -type f -exec cat {} + > out/arch/arm64/boot/dtb
+          ls -lh out/arch/arm64/boot/dtb
+
+      - name: Pack AnyKernel3
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AK3
+          cd AK3
+          rm -rf .git .github README.md
+          cat > anykernel.sh <<'EOF'
+          # AnyKernel3 for Samsung Note20 Ultra (Exynos9830) ReSukiSU
+          properties() { '
+          kernel.string=ReSukiSU Kernel universal9830 (by BailinT CI, source ivnls)
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          '; }
+
+          BLOCK=/dev/block/platform/13100000-exynos9830/by-name/BOOT;
+          IS_SLOT_DEVICE=0;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          split_boot;
+          flash_boot;
+          EOF
+          cp ../kernel/out/arch/arm64/boot/Image .
+          cp ../kernel/out/arch/arm64/boot/dtb .
+          zip -r9 ../AK3_resukisu_${{ inputs.device_config }}_${{ env.TREE_HEAD }}.zip .
+          cd ..
+          ls -lh AK3_*.zip
+          sha256sum AK3_*.zip > AK3_*.zip.sha256 || true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: universal9830_resukisu_${{ inputs.device_config }}_${{ env.TREE_HEAD }}
+          path: |
+            AK3_*.zip
+          compression-level: 9
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildlog_${{ inputs.device_config }}_${{ env.TREE_HEAD }}
+          path: artifacts/build.log
+          compression-level: 9
