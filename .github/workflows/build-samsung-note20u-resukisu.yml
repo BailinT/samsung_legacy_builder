@@ -103,6 +103,22 @@ jobs:
           echo "=== LED/KSU 关键配置终态 ==="
           grep -E "CONFIG_KSU|CONFIG_LEDS_RT8547|CONFIG_LEDS_S2MPB02|CONFIG_SEC_MODEL" out/.config || true
 
+      - name: Patch tcs3407.c (RT8547 branch self-contained, idempotent)
+        working-directory: kernel
+        run: |
+          # r8s 等机型：tcs3407.c 的 RT8547 EOL 分支依赖 leds-rt8547.h 的宏/声明，
+          # 但 CONFIG_LEDS_RT8547 在最终编译单元未生效（kconfig 依赖链问题）。
+          # 自足修复：在 include "tcs3407.h" 之前注入 tcs3407 专用的最小声明块，
+          # 用 TCS3407_RT8547 自定义宏守卫，与 kconfig 无关，幂等。
+          F=drivers/optics/tcs3407.c
+          if ! grep -q 'TCS3407_RT8547_SHIM' "$F"; then
+            sed -i 's|#include "tcs3407.h"|#include "tcs3407.h"\n\n/* TCS3407_RT8547_SHIM: minimal RT8547 declarations for EOL branch */\n#if defined(CONFIG_LEDS_RT8547) \|\| 1\n#ifndef TCS3407_RT8547_SHIM\n#define TCS3407_RT8547_SHIM\n#ifndef RT8547_MOVIE_CURRENT_25mA\n#define RT8547_MOVIE_CURRENT_25mA 0x0\n#endif\nextern int32_t rt8547_led_set_torch(int curr);\n#endif\n#endif|' "$F"
+            echo "[patched] tcs3407.c shim added"
+          else
+            echo "[skip] shim already present"
+          fi
+          grep -n 'TCS3407_RT8547_SHIM' "$F" | head -3
+
       - name: Build (Image + dtb)
         working-directory: kernel
         run: |
