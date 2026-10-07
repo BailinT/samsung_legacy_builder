@@ -82,6 +82,10 @@ jobs:
             exynos9830_defconfig
           # scripts/config 不支持 --merge，改用合并脚本：机型config + ksu.config 追加后 olddefconfig
           cat arch/arm64/configs/${{ inputs.device_config }}.config arch/arm64/configs/ksu.config >> out/.config
+          # 上游 r8s.config 笔误：裸行 "CONFIG_LEDS_S2MPB02 is not set" 缺 "# " 前缀，
+          # kconfig 视为非法行直接忽略 → S2MPB02 未关 → tcs3407.c 的 #elif 分支失效报错。
+          # 补成合法注释行（对所有 config 幂等生效）。
+          sed -i 's/^CONFIG_LEDS_S2MPB02 is not set$/# CONFIG_LEDS_S2MPB02 is not set/' out/.config
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang LD=ld.lld olddefconfig
           echo "=== KSU/机型关键配置确认 ==="
           grep -E "CONFIG_KSU|CONFIG_SEC_" out/.config | head -20 || true
