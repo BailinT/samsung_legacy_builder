@@ -86,9 +86,22 @@ jobs:
           # kconfig 视为非法行直接忽略 → S2MPB02 未关 → tcs3407.c 的 #elif 分支失效报错。
           # 补成合法注释行（对所有 config 幂等生效）。
           sed -i 's/^CONFIG_LEDS_S2MPB02 is not set$/# CONFIG_LEDS_S2MPB02 is not set/' out/.config
+          # r8s 等机型：CONFIG_LEDS_RT8547 若因依赖链被 olddefconfig 抹掉，
+          # tcs3407.c 的 RT8547 分支会报 undeclared identifier。强制点亮并带上常见依赖。
+          ./scripts/config --file out/.config \
+            -e CONFIG_LEDS_RT8547 \
+            -e CONFIG_LEDS_CLASS_FLASH \
+            -e CONFIG_LEDS_CLASS
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- CC=clang LD=ld.lld olddefconfig
-          echo "=== KSU/机型关键配置确认 ==="
-          grep -E "CONFIG_KSU|CONFIG_SEC_" out/.config | head -20 || true
+          # olddefconfig 可能因依赖未满足再次抹掉 RT8547 → 此时回填并跳过末次 olddefconfig
+          # （该选项只影响 tcs3407 的 LED 联动编译分支，直写 .config 安全）
+          if ! grep -q '^CONFIG_LEDS_RT8547=y$' out/.config; then
+            echo "CONFIG_LEDS_RT8547=y" >> out/.config
+            sed -i '/^# CONFIG_LEDS_S2MPB02 is not set$/d; /^CONFIG_LEDS_S2MPB02=y$/d' out/.config
+            echo '# CONFIG_LEDS_S2MPB02 is not set' >> out/.config
+          fi
+          echo "=== LED/KSU 关键配置终态 ==="
+          grep -E "CONFIG_KSU|CONFIG_LEDS_RT8547|CONFIG_LEDS_S2MPB02|CONFIG_SEC_MODEL" out/.config || true
 
       - name: Build (Image + dtb)
         working-directory: kernel
